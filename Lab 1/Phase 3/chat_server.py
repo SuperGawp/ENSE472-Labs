@@ -9,43 +9,32 @@ FORMAT = 'utf-8'
 DISCONNECT_MESSAGE = "!Q"
 HEADER_SIZE_IN_BYTES = 8
 
+# store the clients here 
 clients = []
 clients_lock = threading.Lock()
 
-#broadcast a message to all connected clients except the sender
-def broadcast(message, sender_conn):
+# use this to display messages to everyone BUT the sender
+def broadcast(message, sender_addr):
     with clients_lock:
-        for client_conn, _ in clients:
-            if client_conn != sender_conn:
+        for client, addr in clients:
+            if addr != sender_addr:
                 try:
                     message_length = len(message)
                     message_send_length = str(message_length).encode(FORMAT)
                     padding_needed = HEADER_SIZE_IN_BYTES - len(message_send_length)
                     padding = b' ' * padding_needed
                     padded_message_send_length = message_send_length + padding
-                    client_conn.send(padded_message_send_length)
-                    client_conn.send(message.encode(FORMAT))
+                    client.send(padded_message_send_length)
+                    client.send(message.encode(FORMAT))
                 except:
                     # Handle any errors that may occur while sending to a specific client
-                    print("Failed to send message to a client")
-
-def broadcast_user_info(username, action):
-    message = f"{username} has {action} the chat."
-    broadcast(message, None)
+                    print(f"Failed to send message to {addr}")
 
 # one instance of this will run for each client in a thread
 def handle_client(conn, addr, server_active):
     print(f"[NEW CONNECTION] {addr} connected.")
-
-    conn.send("Enter your username: ".encode(FORMAT))
-    
-    username = conn.recv(1024).decode(FORMAT)
-    
     with clients_lock:
-        clients.append((conn, username))
-    
-    broadcast_user_info(username, "joined")
-    
+        clients.append((conn, addr))
     connected = True
     while server_active.is_set() and connected:
         try:
@@ -56,20 +45,16 @@ def handle_client(conn, addr, server_active):
                 message_encoded = conn.recv(message_length_int)
                 message = message_encoded.decode(FORMAT)
                 if message != DISCONNECT_MESSAGE:
-                    print(f"[{username}] {message}")
+                    print(f"[{addr}] {message}")
                     # Broadcast the message to all clients except the sender
-                    broadcast(f"[{username}] {message}", conn)
+                    broadcast(f"[{addr}] {message}", addr)
                 else:
                     connected = False
         except socket.timeout:
             continue
-    
     with clients_lock:
-        clients.remove((conn, username))
-    
-    broadcast_user_info(username, "left")
-    
-    print(f"[END CONNECTION] {username} disconnected.")
+        clients.remove((conn, addr))
+    print(f"[END CONNECTION] {addr} disconnected.")
     print(f"[ACTIVE CONNECTIONS] {len(clients)}")
     conn.close()
 
@@ -84,7 +69,7 @@ if __name__ == "__main__":
     server_active.set()
     try:
         while True:
-            #blocking command, it will wait for a new connection to the server
+            # This is a blocking command, it will wait for a new connection to the server
             conn, addr = server.accept()
             conn.settimeout(1)
             thread = threading.Thread(target=handle_client, args=(conn, addr, server_active))
