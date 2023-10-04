@@ -9,33 +9,45 @@ FORMAT = 'utf-8'
 DISCONNECT_MESSAGE = "!Q"
 HEADER_SIZE_IN_BYTES = 8
 
-# store the clients here 
 clients = []
-clients_lock = threading.Lock()
+client_usernames = {}
 
-# use this to display messages to everyone BUT the sender
-def broadcast(message, sender_addr):
-    with clients_lock:
-        for client, addr in clients:
-            if addr != sender_addr:
-                try:
-                    message_length = len(message)
-                    message_send_length = str(message_length).encode(FORMAT)
-                    padding_needed = HEADER_SIZE_IN_BYTES - len(message_send_length)
-                    padding = b' ' * padding_needed
-                    padded_message_send_length = message_send_length + padding
-                    client.send(padded_message_send_length)
-                    client.send(message.encode(FORMAT))
-                except:
-                    # Handle any errors that may occur while sending to a specific client
-                    print(f"Failed to send message to {addr}")
+def send(client_socket, message):
+    message_encoded = message.encode(FORMAT)
+    message_length = len(message_encoded)
+    message_send_length = str(message_length).encode(FORMAT)
+    padding_needed = HEADER_SIZE_IN_BYTES - len(message_send_length)
+    padding = b' ' * padding_needed
+    padded_message_send_length = message_send_length + padding
+    client_socket.send(padded_message_send_length)
+    client_socket.send(message_encoded)
 
-# one instance of this will run for each client in a thread
+def broadcast_message(sender_sock, message):
+    sender_username = client_usernames[sender_sock]
+    for client_sock, _, _ in clients:
+        if client_sock != sender_sock:
+            try:
+                send(client_sock, f"[{sender_username}] {message}")
+            except:
+                pass
+
 def handle_client(conn, addr, server_active):
     print(f"[NEW CONNECTION] {addr} connected.")
-    with clients_lock:
-        clients.append((conn, addr))
     connected = True
+
+    # Send the username prompt message to the client
+    #send(conn, "Enter your username: ")
+
+    username = conn.recv(1024).decode(FORMAT)
+    client_usernames[conn] = username
+
+    # Notify that the username is entered
+    print(f"[NAME ENTERED] {addr} is now {username}")
+
+    clients.append((conn, addr, username))
+
+    broadcast_message(conn, f"has entered the chat.")
+
     while server_active.is_set() and connected:
         try:
             message_length_encoded = conn.recv(HEADER_SIZE_IN_BYTES)
@@ -45,17 +57,19 @@ def handle_client(conn, addr, server_active):
                 message_encoded = conn.recv(message_length_int)
                 message = message_encoded.decode(FORMAT)
                 if message != DISCONNECT_MESSAGE:
-                    print(f"[{addr}] {message}")
-                    # Broadcast the message to all clients except the sender
-                    broadcast(f"[{addr}] {message}", addr)
+                    print(f"[{username}] {message}")
+                    broadcast_message(conn, message)
                 else:
                     connected = False
         except socket.timeout:
             continue
-    with clients_lock:
-        clients.remove((conn, addr))
-    print(f"[END CONNECTION] {addr} disconnected.")
-    print(f"[ACTIVE CONNECTIONS] {len(clients)}")
+
+    broadcast_message(conn, f"has left the chat.")
+    del client_usernames[conn]
+    clients.remove((conn, addr, username))
+
+    print(f"[CLOSED CONNECTION] {username} left.")
+    print(f"[ACTIVE CONNECTIONS] {threading.active_count() - 2}")
     conn.close()
 
 if __name__ == "__main__":
@@ -69,17 +83,18 @@ if __name__ == "__main__":
     server_active.set()
     try:
         while True:
-            # This is a blocking command, it will wait for a new connection to the server
-            conn, addr = server.accept()
-            conn.settimeout(1)
-            thread = threading.Thread(target=handle_client, args=(conn, addr, server_active))
-            thread.start()
-            threads.append(thread)
-            print(f"[ACTIVE CONNECTIONS] {len(clients)}")
+            try:
+                conn, addr = server.accept()
+                thread = threading.Thread(target=handle_client, args=(conn, addr, server_active))
+                thread.start()
+                threads.append(thread)
+                print(f"[ACTIVE CONNECTIONS] {threading.active_count() - 1}")
+            except socket.timeout:
+                continue
     except KeyboardInterrupt:
         print("[SHUTTING DOWN] Attempting to close threads.")
         server_active.clear()
         for thread in threads:
             thread.join()
-        print(f"[ACTIVE CONNECTIONS] {len(clients)}")
+        print(f"[ACTIVE CONNECTIONS] {threading.active_count() - 1}")
     server.close()
