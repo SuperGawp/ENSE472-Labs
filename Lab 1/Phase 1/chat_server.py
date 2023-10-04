@@ -11,7 +11,7 @@ HEADER_SIZE_IN_BYTES = 8
 
 # one instance of this will run for each client in a thread
 def handle_client(conn, addr, server_active):
-    print (f"[NEW CONNECTION] {addr} connected.")
+    print(f"[NEW CONNECTION] {addr} connected.")
     connected = True
     while server_active.is_set() and connected:
         try:
@@ -22,13 +22,16 @@ def handle_client(conn, addr, server_active):
                 message_encoded = conn.recv(message_length_int)
                 message = message_encoded.decode(FORMAT)
                 if message != DISCONNECT_MESSAGE:
-                    print (f"[{addr}] {message}")
+                    print(f"[{addr}] {message}")
+                    # Echo the message back to the client
+                    conn.send(message_length_encoded)
+                    conn.send(message_encoded)
                 else:
                     connected = False
         except socket.timeout:
             continue
-    print (f"[END CONNECTION] {addr} disconnected.")
-    print (f"[ACTIVE CONNECTIONS] {threading.activeCount() - 2}")
+    print(f"[END CONNECTION] {addr} disconnected.")
+    print(f"[ACTIVE CONNECTIONS] {threading.activeCount() - 2}")
     conn.close()
 
 if __name__ == "__main__":
@@ -36,21 +39,23 @@ if __name__ == "__main__":
     server.bind(TCP_ADDR)
     print ("[STARTING] Server is starting...")
     server.listen()
+    server.settimeout(1)
     print (f"[LISTENING] Server is listening on {SERVER_IP}")
     threads = []
     server_active = threading.Event()
     server_active.set()
     try:
         while True:
-            # this is a blocking command, it will wait for a new connection to the server
-            conn, addr = server.accept()
-            conn.settimeout(1)
-            thread = threading.Thread(target=handle_client, args=(conn, addr, server_active))
-            thread.start()
-            threads.append(thread)
-            print (f"[ACTIVE CONNECTIONS] {threading.activeCount() - 1}")
-
-
+            try:
+                # this is a blocking command, it will wait for a new connection to the server
+                conn, addr = server.accept()
+                conn.settimeout(1)
+                thread = threading.Thread(target=handle_client, args=(conn, addr, server_active))
+                thread.start()
+                threads.append(thread)
+                print (f"[ACTIVE CONNECTIONS] {threading.activeCount() - 1}")
+            except socket.timeout:
+                continue
     except KeyboardInterrupt:
         print ("[SHUTTING DOWN] Attempting to close threads.")
         server_active.clear()
