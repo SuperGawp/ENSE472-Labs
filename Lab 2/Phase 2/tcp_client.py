@@ -1,3 +1,5 @@
+#Author: Aryan Chandra & Muhammad (Hasaan) Toor
+
 from twisted.internet import reactor, protocol, ssl
 
 class Client(protocol.Protocol):
